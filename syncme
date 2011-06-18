@@ -1,0 +1,29 @@
+#!/bin/env python2.7
+
+import sys, getopt
+
+# Global vars
+__author__  = "Robin Xiao"
+__version__ = "1.0.1"
+
+program = sys.argv[0]
+
+def usage():
+    check()
+    print "\n".join((
+        "%(program)s %(version)s",
+        "Usage: %(program)s -f target [module1 [...]]"
+        )) % {'program':program, 'version': __version__}
+
+def check():
+    print getopt.getopt(sys.argv[1:], 'f', ['force'])
+
+def main():
+    usage()
+
+def test():
+    print program
+
+
+if __name__ == "__main__":
+    main()

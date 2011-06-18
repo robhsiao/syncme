@@ -1,0 +1,13 @@
+[module test]
+path = test
+module = frontend
+ignore = test
+
+[target "sandbox"]
+    modules = *
+    hosts   = [username@]hosts1[:port]
+
+[target production]
+modules = abc, test
+hosts   = w1
+compress = yes
