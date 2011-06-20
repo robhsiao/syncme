@@ -1,13 +1,22 @@
-[module test]
-path = test
-module = frontend
-ignore = test
+; syncme -f <env> [<module1> <module2>]
+; -f means force go, no preview
 
-[target "sandbox"]
-    modules = *
-    hosts   = [username@]hosts1[:port]
+[module test]
+; 本地文件路径，相对路径以 Syncfile 所在目录为 pwd 目录
+path = test
+
+; 默认为 module name
+module = hello_%(path)s
+ignore = 
+    test2
+
+[target sandbox]
+; 这个环境需要发送哪些module，优先以命令选项指定
+; 也可以指定特殊值："*"，表示所有module
+modules = *
+hosts   = [username@]hosts1[:port]
 
 [target production]
 modules = abc, test
 hosts   = w1
-compress = yes
+compress_assets = yes
