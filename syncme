@@ -1,29 +1,72 @@
-#!/bin/env python2.7
+#!/bin/env python2.4
 
 import sys, getopt
 
-# Global vars
 __author__  = "Robin Xiao"
-__version__ = "1.0.1"
+__version__ = "0.1.0"
 
+# Global vars
 program = sys.argv[0]
 
-def usage():
-    check()
+def print_usage():#{{{
     print "\n".join((
-        "%(program)s %(version)s",
-        "Usage: %(program)s -f target [module1 [...]]"
+        # "%(program)s %(version)s",
+        "Usage: %(program)s -f target [module1 [...]]",
+        "\t-f --force: go straight, no preview"
         )) % {'program':program, 'version': __version__}
+#}}}
 
-def check():
-    print getopt.getopt(sys.argv[1:], 'f', ['force'])
+def print_version():#{{{
+    print "%(program)s %(version)s" % {'program':program, 'version': __version__}
+#}}}
 
-def main():
-    usage()
+def establish_tunnel():#{{{
+    pass
+#}}}
 
-def test():
-    print program
+def parse_options(options): #{{{
+    try:
+        opts, args = getopt.getopt(sys.argv[1:], "fhV", ["force","help","version"])
+    except getopt.GetoptError:
+        print >> sys.stderr, \
+                "** %s: %s" % (program, str(sys.exc_info()[1]))
+        print_usage()
+        sys.exit(1)
 
+    # parse options
+    for opt, arg in opts:
+        if opt in ("-f", "--force"):
+            options['force'] = True
+        elif opt in ("-h", "--help"):
+            print_usage()
+            sys.exit(0)
+        elif opt in ("-V", "--version"):
+            print_version()
+            sys.exit(0)
+
+    # parse arguments
+    for idx, arg in enumerate(args):
+        if idx == 0:
+            options['target'] = arg
+        else:
+            options['modules'].append(arg)
+
+    # check whether target specified
+    if not options['target']:
+        print >> sys.stderr, \
+                "** %s: No target specified" % program
+        print_usage()
+        sys.exit(1)
+#}}}
+
+def parse_configure():#{{{
+    pass
+#}}}
+
+def main():#{{{
+    options = {'force': False, 'target': None, 'modules': []}
+    parse_options(options)
+#}}}
 
 if __name__ == "__main__":
     main()
