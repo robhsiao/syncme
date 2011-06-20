@@ -1,16 +1,15 @@
 #!/bin/env python2.4
 
-import sys, getopt
+import os, sys, getopt
 
 __author__  = "Robin Xiao"
 __version__ = "0.1.0"
 
 # Global vars
-program = sys.argv[0]
+program = os.path.basename(sys.argv[0])
 
 def print_usage():#{{{
     print "\n".join((
-        # "%(program)s %(version)s",
         "Usage: %(program)s -f target [module1 [...]]",
         "\t-f --force: go straight, no preview"
         )) % {'program':program, 'version': __version__}
@@ -24,7 +23,8 @@ def establish_tunnel():#{{{
     pass
 #}}}
 
-def parse_options(options): #{{{
+def parse_command_options(): #{{{
+    options = {}
     try:
         opts, args = getopt.getopt(sys.argv[1:], "fhV", ["force","help","version"])
     except getopt.GetoptError:
@@ -52,20 +52,39 @@ def parse_options(options): #{{{
             options['modules'].append(arg)
 
     # check whether target specified
-    if not options['target']:
+    if not 'target' in options:
         print >> sys.stderr, \
                 "** %s: No target specified" % program
         print_usage()
         sys.exit(1)
+    return options
 #}}}
 
 def parse_configure():#{{{
-    pass
+    conf = None
+
+    # Syncfile pattern, order by priority
+    patterns = ('Syncfile', 'syncfile', 'Syncmefile', 'syncmefile')
+
+    for pattern in patterns:
+        if os.path.isfile(pattern):
+            conf = pattern
+
+    if not conf:
+        print >> sys.stderr, \
+                "** %s: No Syncfile found in current directory" % program
+        sys.exit(1)
+
+    print open(conf).read()
 #}}}
 
 def main():#{{{
+    os.chdir(os.getcwd())
+
     options = {'force': False, 'target': None, 'modules': []}
-    parse_options(options)
+    options.update(parse_command_options())
+
+    config = parse_configure()
 #}}}
 
 if __name__ == "__main__":
