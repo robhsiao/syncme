@@ -1,6 +1,7 @@
 #!/bin/env python2.4
 
 import os, sys, getopt
+import ConfigParser
 
 __author__  = "Robin Xiao"
 __version__ = "0.1.0"
@@ -11,8 +12,10 @@ program = os.path.basename(sys.argv[0])
 def print_usage():#{{{
     print "\n".join((
         "Usage: %(program)s -f target [module1 [...]]",
-        "\t-f --force: go straight, no preview"
-        )) % {'program':program, 'version': __version__}
+        "\t-f --force: go straight, no preview",
+        "\t-h --help: print this help message",
+        "\t-V --version: print version infomation",
+        )) % {'program':program}
 #}}}
 
 def print_version():#{{{
@@ -49,6 +52,8 @@ def parse_command_options(): #{{{
         if idx == 0:
             options['target'] = arg
         else:
+            if not 'modules' in options:
+                options['modules'] = []
             options['modules'].append(arg)
 
     # check whether target specified
@@ -62,6 +67,7 @@ def parse_command_options(): #{{{
 
 def parse_configure():#{{{
     conf = None
+    configure = None
 
     # Syncfile pattern, order by priority
     patterns = ('Syncfile', 'syncfile', 'Syncmefile', 'syncmefile')
@@ -75,7 +81,25 @@ def parse_configure():#{{{
                 "** %s: No Syncfile found in current directory" % program
         sys.exit(1)
 
-    print open(conf).read()
+    cf = ConfigParser.ConfigParser()
+    try:
+        cf.read(conf)
+    except ConfigParser.ParsingError:
+        print >> sys.stderr, \
+                "** %s: Error while parsing Syncfile\n%s" % (program, str(sys.exc_info()[1]))
+        sys.exit(1)
+
+    configure = {'modules' : {}, 'targets' : {}}
+
+    if not configure['modules']:
+        print >> sys.stderr, \
+                "** %s: No any modules defined" % program
+        sys.exit(1)
+
+    if not configure['targets']:
+        print >> sys.stderr, \
+                "** %s: No any targets defined" % program
+        sys.exit(1)
 #}}}
 
 def main():#{{{
@@ -84,7 +108,7 @@ def main():#{{{
     options = {'force': False, 'target': None, 'modules': []}
     options.update(parse_command_options())
 
-    config = parse_configure()
+    configure = parse_configure()
 #}}}
 
 if __name__ == "__main__":
