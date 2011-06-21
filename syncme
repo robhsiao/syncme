@@ -1,7 +1,8 @@
 #!/bin/env python2.4
 
 import os, sys, getopt
-import ConfigParser, re, getpass
+import ConfigParser, re
+import subprocess, getpass
 
 __author__  = "Robin Xiao"
 __version__ = "0.1.0"
@@ -9,13 +10,14 @@ __version__ = "0.1.0"
 # Global vars
 program = os.path.basename(sys.argv[0])
 
-def print_error(msg,*args,**kargs):
+def print_error(msg,*args,**kargs):#{{{
     print >> sys.stderr, \
             "** " + program + ": " + msg % args
 
     if 'usage' in kargs and kargs['usage']:
         print_usage()
     sys.exit(1)
+#}}}
 
 def print_usage():#{{{
     print "\n".join((
@@ -35,16 +37,44 @@ def get_list(str):#{{{
     return [elem for elem in list if elem]
 #}}}
 
-def establish_tunnel(configure, options):#{{{
-    pass
+def establish_tunnel(conf, options):#{{{
+    if not options['target'] in conf['targets']:
+        print_error('Not defined target "%s"', options['target'])
+
+    target = conf['targets'][options['target']]
+    hosts = target['hosts']
+
+    established = []
+    default_user = getpass.getuser()
+
+    try:
+        for idx, host in enumerate(hosts):
+            user, host, port = re.match('^(?:([^@]*)@)?([^:]*)(?::(\d+))?', host).groups()
+            if not user:
+                user = raw_input("Enter your username on %s. [%s]: " % (host, default_user)).strip()
+                if not user:
+                    user = default_user
+                else:
+                    default_user = user
+            
+            if not port:
+                port = 22
+
+            command = 'ssh -p %s -CfNL 3306:127.0.1:873 %s@%s' % (port, user, host)
+            code = subprocess.call(command, shell=1)
+
+            if code > 0:
+                print_error('Error while setup ssh tunnel')
+    except KeyboardInterrupt:
+        print "OK"
 #}}}
 
 def parse_command_options(): #{{{
     options = {}
     try:
         opts, args = getopt.getopt(sys.argv[1:], "fhV", ["force","help","version"])
-    except getopt.GetoptError:
-        print_error(str(sys.exc_info()[1]),usage=True)
+    except getopt.GetoptError, e:
+        print_error(str(e),usage=True)
 
     # parse options
     for opt, arg in opts:
@@ -72,7 +102,7 @@ def parse_command_options(): #{{{
     return options
 #}}}
 
-def parse_configure(options):#{{{
+def parse_configure():#{{{
     # Syncfile pattern, order by priority
     file = None
     patterns = ('Syncfile', 'syncfile', 'Syncmefile', 'syncmefile')
@@ -88,10 +118,10 @@ def parse_configure(options):#{{{
     cf = ConfigParser.ConfigParser()
     try:
         cf.read(file)
-    except ConfigParser.ParsingError:
-        print_error('Error while parsing Syncfile\n%s"', str(sys.exc_info()[1]))
+    except ConfigParser.ParsingError, e:
+        print_error('Error while parsing Syncfile\n%s"', str(e))
 
-    configure = dict(modules={}, targets={})
+    conf = dict(modules={}, targets={})
 
     # -------------------------------
     for section in cf.sections():
@@ -118,7 +148,7 @@ def parse_configure(options):#{{{
 
             # uniq
             ignore = tuple(set(ignore))
-            configure['modules'][module_name] = dict(remote = remote, path = path, ignore = ignore)
+            conf['modules'][module_name] = dict(remote = remote, path = path, ignore = ignore)
 
         elif type == "target":
             target_name = name
@@ -145,20 +175,25 @@ def parse_configure(options):#{{{
             if cf.has_option(section, 'compress_assets'):
                 compress = cf.getboolean(section, 'compress_assets')
 
-            configure['targets'][target_name] = dict(modules=mods, hosts=hosts, compress_assets=compress)
+            conf['targets'][target_name] = dict(modules=mods, hosts=hosts, compress_assets=compress)
 
-    if not configure['modules']:
+    if not conf['modules']:
         print_error('No modules were defined')
 
-    if not configure['targets']:
+    if not conf['targets']:
         print_error('No targets were defined')
 
     # replace "*" with module name
-    for target in configure['targets']:
-        if configure['targets'][target]['modules'] == '*':
-            configure['targets'][target]['modules'] = all_modules
+    for target in conf['targets']:
+        mods = conf['targets'][target]['modules']
+        if mods == '*':
+            conf['targets'][target]['modules'] = conf['modules'].keys()
+        else:
+            for mod in mods:
+                if mod not in conf['modules']:
+                    print_error('Not defined module "%s" found in target "%s"', mod, target)
 
-    return configure
+    return conf
 #}}}
 
 def main():#{{{
@@ -167,8 +202,13 @@ def main():#{{{
     options = {'force': False, 'target': None, 'modules': []}
     options.update(parse_command_options())
 
-    config = parse_configure(options)
-    establish_tunnel(config, options)
+    config = parse_configure()
+
+    try:
+        establish_tunnel(config, options)
+    except KeyboardInterrupt:
+        print "xx"
+        sys.exit(1)
 #}}}
 
 if __name__ == "__main__":
