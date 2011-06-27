@@ -10,6 +10,7 @@ __version__ = "0.1.0"
 # Global vars
 program = os.path.basename(sys.argv[0])
 
+
 def print_error(msg,*args,**kargs):#{{{
     print >> sys.stderr, \
             "** " + program + ": " + msg % args
@@ -38,9 +39,6 @@ def get_list(str):#{{{
 #}}}
 
 def establish_tunnel(conf, options):#{{{
-    if not options['target'] in conf['targets']:
-        print_error('Not defined target "%s"', options['target'])
-
     target = conf['targets'][options['target']]
     hosts = target['hosts']
 
@@ -63,11 +61,39 @@ def establish_tunnel(conf, options):#{{{
             command = 'ssh -p %s -CfNL 3306:127.0.1:873 %s@%s' % (port, user, host)
             code = subprocess.call(command, shell=1)
 
+            print code
             if code > 0:
                 print_error('Error while setup ssh tunnel')
     except KeyboardInterrupt:
-        print "OK"
+        # TODO
+        pass
 #}}}
+
+def sync(conf, options):#{{{
+    target = conf['targets'][options['target']]
+
+    modules = options['modules']
+    if not modules:
+        modules = target['modules']
+
+    for module in modules:
+        module_conf = conf['modules'][module]
+
+        path   = module_conf['path']
+        remote = module_conf['remote']
+
+        exclude_opt = ""
+        for ignore in module_conf['ignore']:
+            exclude_opt += ' --exclude="%s" ' % ignore
+
+        command = 'rsync -avz --cvs-exclude ' + exclude_opt + ' --checksum --port 8731 --delay-updates ' + path + ' 127.0.0.1::' + remote
+        code = subprocess.call(command, shell=1)
+        print code
+#}}}
+
+    def close_tunnel():#{{{
+        pass
+    #}}}
 
 def parse_command_options(): #{{{
     options = {}
@@ -102,7 +128,7 @@ def parse_command_options(): #{{{
     return options
 #}}}
 
-def parse_configure():#{{{
+def parse_configure(options):#{{{
     # Syncfile pattern, order by priority
     file = None
     patterns = ('Syncfile', 'syncfile', 'Syncmefile', 'syncmefile')
@@ -193,6 +219,13 @@ def parse_configure():#{{{
                 if mod not in conf['modules']:
                     print_error('Not defined module "%s" found in target "%s"', mod, target)
 
+    if not options['target'] in conf['targets']:
+        print_error('Not defined target "%s"', options['target'])
+
+    for mod in options['modules']:
+        if mod not in conf['modules']:
+            print_error('Not defined module "%s" found in target "%s"', mod, target)
+
     return conf
 #}}}
 
@@ -202,13 +235,12 @@ def main():#{{{
     options = {'force': False, 'target': None, 'modules': []}
     options.update(parse_command_options())
 
-    config = parse_configure()
+    conf = parse_configure(options)
 
-    try:
-        establish_tunnel(config, options)
-    except KeyboardInterrupt:
-        print "xx"
-        sys.exit(1)
+    #print configure
+    #establish_tunnel(config, options)
+
+    sync(conf, options)
 #}}}
 
 if __name__ == "__main__":
