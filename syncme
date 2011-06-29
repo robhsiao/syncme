@@ -3,6 +3,7 @@
 import os, sys, getopt
 import ConfigParser, re
 import subprocess, getpass
+import os, signal
 
 __author__  = "Robin Xiao"
 __version__ = "0.1.0"
@@ -21,7 +22,7 @@ def print_error(msg,*args,**kargs):#{{{
     if 'usage' in kargs and kargs['usage']:
         print_usage()
 
-    exit = False
+    exit = True
     if 'exit' in kargs:
         exit = kargs['exit']
 
@@ -51,11 +52,13 @@ def establish_tunnel(conf, options):#{{{
     target = conf['targets'][options['target']]
     hosts = target['hosts']
 
-    established = []
+    tunnel = dict()
+    pids   = list()
     default_user = getpass.getuser()
 
     try:
         for idx, host in enumerate(hosts):
+            tunnel_port = 1873 + idx
             user, host, port = re.match('^(?:([^@]*)@)?([^:]*)(?::(\d+))?', host).groups()
             if not user:
                 user = raw_input("Enter your username on %s. [%s]: " % (host, default_user)).strip()
@@ -67,18 +70,22 @@ def establish_tunnel(conf, options):#{{{
             if not port:
                 port = 22
 
-            command = 'ssh -p %s -CfNL 3306:127.0.1:873 %s@%s' % (port, user, host)
-            code = subprocess.call(command, shell=1)
+            command = 'ssh -p %s -CfNL %d:127.0.0.1:873 %s@%s' % (port, tunnel_port, user, host)
+            child = subprocess.Popen(command, shell=1)
+            child.wait()
 
-            print code
-            if code > 0:
+            if child.returncode > 0:
                 print_error('Error while setup ssh tunnel')
+            else:
+                tunnel[host] = tunnel_port
+                pids.append(child.pid)
     except KeyboardInterrupt:
-        # TODO
-        pass
+        sys.exit(0)
+
+    return tunnel, pids
 #}}}
 
-def sync(conf, options):#{{{
+def sync(conf, options, tunnel):#{{{
     target = conf['targets'][options['target']]
 
     modules = options['modules']
@@ -86,29 +93,31 @@ def sync(conf, options):#{{{
         modules = target['modules']
 
     sync_failed = []
-    for module in modules:
-        module_conf = conf['modules'][module]
+    for host in target['hosts']:
+        for module in modules:
+            module_conf = conf['modules'][module]
 
-        path   = module_conf['path']
-        remote = module_conf['remote']
+            path   = module_conf['path']
+            remote = module_conf['remote']
 
-        exclude_opt = ""
-        for ignore in module_conf['ignore']:
-            exclude_opt += ' --exclude="%s" ' % ignore
+            exclude_opt = ""
+            for ignore in module_conf['ignore']:
+                exclude_opt += ' --exclude="%s" ' % ignore
 
-        command = 'rsync -avz --cvs-exclude ' + exclude_opt + ' --checksum --port 8731 --delay-updates ' + path + ' 127.0.0.1::' + remote
-        if subprocess.call(command, shell=1) > 0:
-            sync_failed.append({'module':module, 'host':''})
+            command = 'rsync -avz ' + exclude_opt + ' --checksum --port ' + str(tunnel[host]) + ' --delay-updates ' + path + ' 127.0.0.1::' + remote
+            if subprocess.call(command, shell=1) > 0:
+                sync_failed.append({'module':module, 'host':host})
 
-    if sync_failed:
-        print_error('following module synced failed:', exit=False)
-        for failed in sync_failed:
-            print_error('** %(module)s ok' % failed, header=0, exit=0)
+        if sync_failed:
+            print_error('following module synced failed:', exit=False)
+            for failed in sync_failed:
+                print_error('** %(module)s ok' % failed, header=0, exit=0)
 #}}}
 
-    def close_tunnel():#{{{
-        pass
-    #}}}
+def close_tunnel():#{{{
+    cmd = """ps -u `whoami` -f | awk '/ssh/ && /127\.0\.0\.1:873/ && ! /awk/ {print "kill "$2}' | sh"""
+    subprocess.call(cmd, shell=True)
+#}}}
 
 def parse_command_options(): #{{{
     options = {}
@@ -253,9 +262,11 @@ def main():#{{{
     conf = parse_configure(options)
 
     #print configure
-    #establish_tunnel(config, options)
+    tunnel, pids = establish_tunnel(conf, options)
 
-    sync(conf, options)
+    sync(conf, options, tunnel)
+
+    close_tunnel()
 #}}}
 
 if __name__ == "__main__":
