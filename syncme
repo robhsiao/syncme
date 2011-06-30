@@ -59,9 +59,9 @@ def establish_tunnel(conf, options):#{{{
     try:
         for idx, host in enumerate(hosts):
             tunnel_port = 1873 + idx
-            user, host, port = re.match('^(?:([^@]*)@)?([^:]*)(?::(\d+))?', host).groups()
+            user, hostname, port = re.match('^(?:([^@]*)@)?([^:]*)(?::(\d+))?', host).groups()
             if not user:
-                user = raw_input("Enter your username on %s. [%s]: " % (host, default_user)).strip()
+                user = raw_input("Enter your username on %s. [%s]: " % (hostname, default_user)).strip()
                 if not user:
                     user = default_user
                 else:
@@ -70,7 +70,7 @@ def establish_tunnel(conf, options):#{{{
             if not port:
                 port = 22
 
-            command = 'ssh -p %s -CfNL %d:127.0.0.1:873 %s@%s' % (port, tunnel_port, user, host)
+            command = 'ssh -p %s -CfNL %d:127.0.0.1:873 %s@%s' % (port, tunnel_port, user, hostname)
             child = subprocess.Popen(command, shell=1,stderr=subprocess.PIPE)
             child.wait()
 
