@@ -1,0 +1,276 @@
+#!/bin/env python2.4
+
+import os, sys, getopt
+import ConfigParser, re
+import subprocess, getpass
+import os, signal
+
+__author__  = "Robin Xiao"
+__version__ = "0.1.0"
+
+# Global vars
+program = os.path.basename(sys.argv[0])
+
+
+def print_error(msg,*args,**kargs):#{{{
+    if 'header' in kargs and not kargs['header']:
+        print >> sys.stderr, msg % args
+    else:
+        print >> sys.stderr, \
+                "** " + program + ": " + msg % args
+
+    if 'usage' in kargs and kargs['usage']:
+        print_usage()
+
+    exit = True
+    if 'exit' in kargs:
+        exit = kargs['exit']
+
+    if exit:
+        sys.exit(1)
+#}}}
+
+def print_usage():#{{{
+    print "\n".join((
+        "Usage: %(program)s -f target [module1 [...]]",
+        "\t-f --force: go straight, no preview",
+        "\t-h --help: print this help message",
+        "\t-V --version: print version infomation",
+        )) % {'program':program}
+#}}}
+
+def print_version():#{{{
+    print "%(program)s %(version)s" % {'program':program, 'version': __version__}
+#}}}
+
+def get_list(str):#{{{
+    list = map(lambda x: x.strip(), re.split("[,\n\s]+", str))
+    return [elem for elem in list if elem]
+#}}}
+
+def establish_tunnel(conf, options):#{{{
+    target = conf['targets'][options['target']]
+    hosts = target['hosts']
+
+    tunnel = dict()
+    pids   = list()
+    default_user = getpass.getuser()
+
+    try:
+        for idx, host in enumerate(hosts):
+            tunnel_port = 1873 + idx
+            user, hostname, port = re.match('^(?:([^@]*)@)?([^:]*)(?::(\d+))?', host).groups()
+            if not user:
+                user = raw_input("Enter your username on %s. [%s]: " % (hostname, default_user)).strip()
+                if not user:
+                    user = default_user
+                else:
+                    default_user = user
+            
+            if not port:
+                port = 22
+
+            command = 'ssh -p %s -CfNL %d:127.0.0.1:873 %s@%s' % (port, tunnel_port, user, hostname)
+            child = subprocess.Popen(command, shell=1,stderr=subprocess.PIPE)
+            child.wait()
+
+            if child.returncode == 0:
+                tunnel[host] = tunnel_port
+                pids.append(child.pid)
+            else:
+                print_error('Error while setup ssh tunnel', exit=False)
+                close_tunnel()
+                sys.exit(0)
+    except KeyboardInterrupt:
+        close_tunnel()
+        sys.exit(0)
+
+    return tunnel, pids
+#}}}
+
+def sync(conf, options, tunnel):#{{{
+    target = conf['targets'][options['target']]
+
+    modules = options['modules']
+    if not modules:
+        modules = target['modules']
+
+    sync_failed = []
+    for host in target['hosts']:
+        for module in modules:
+            module_conf = conf['modules'][module]
+
+            path   = module_conf['path']
+            remote = module_conf['remote']
+
+            exclude_opt = ""
+            for ignore in module_conf['ignore']:
+                exclude_opt += ' --exclude="%s" ' % ignore
+
+            command = 'rsync -avz ' + exclude_opt + ' --checksum --port ' + str(tunnel[host]) + ' --delay-updates ' + path + ' 127.0.0.1::' + remote
+            if subprocess.call(command, shell=1) > 0:
+                sync_failed.append({'module':module, 'host':host})
+
+    if sync_failed:
+        print_error('following module synced failed:', exit=False)
+        for failed in sync_failed:
+            print_error('** "%(module)s" to %(host)s' % failed, header=0, exit=0)
+#}}}
+
+def close_tunnel():#{{{
+    cmd = """ps -u `whoami` -f | awk '/ssh/ && /127\.0\.0\.1:873/ && ! /awk/ {print "kill "$2}' | sh"""
+    subprocess.call(cmd, shell=True)
+#}}}
+
+def parse_command_options(): #{{{
+    options = {}
+    try:
+        opts, args = getopt.getopt(sys.argv[1:], "fhV", ["force","help","version"])
+    except getopt.GetoptError, e:
+        print_error(str(e),usage=True)
+
+    # parse options
+    for opt, arg in opts:
+        if opt in ("-f", "--force"):
+            options['force'] = True
+        elif opt in ("-h", "--help"):
+            print_usage()
+            sys.exit(0)
+        elif opt in ("-V", "--version"):
+            print_version()
+            sys.exit(0)
+
+    # parse arguments
+    for idx, arg in enumerate(args):
+        if idx == 0:
+            options['target'] = arg
+        else:
+            if not 'modules' in options:
+                options['modules'] = []
+            options['modules'].append(arg)
+
+    # check whether target specified
+    if not 'target' in options:
+        print_error('No target specified', usage=True)
+    return options
+#}}}
+
+def parse_configure(options):#{{{
+    # Syncfile pattern, order by priority
+    file = None
+    patterns = ('Syncfile', 'syncfile', 'Syncmefile', 'syncmefile')
+
+    for pattern in patterns:
+        if os.path.isfile(pattern):
+            file = pattern
+            break
+
+    if not file:
+        print_error('No Syncfile was found in current directory')
+
+    cf = ConfigParser.ConfigParser()
+    try:
+        cf.read(file)
+    except ConfigParser.ParsingError, e:
+        print_error('Error while parsing Syncfile\n%s"', str(e))
+
+    conf = dict(modules={}, targets={})
+
+    # -------------------------------
+    for section in cf.sections():
+        type = section[0:7].strip()
+        name = section[7:]
+        if type == "module":
+            module_name = name
+
+            # validate module name
+            if not re.match("^\w+$", module_name):
+                print_error('Not valid module name "%s"', module_name)
+
+            remote = module_name
+            if cf.has_option(section, 'remote'):
+                remote = cf.get(section, 'remote')
+
+            path   = module_name
+            if cf.has_option(section, 'path'):
+                path = cf.get(section, 'path')
+
+            ignore = ['.svn','.git']
+            if cf.has_option(section, 'ignore'):
+                ignore.extend(get_list(cf.get(section, 'ignore')))
+
+            # uniq
+            ignore = tuple(set(ignore))
+            conf['modules'][module_name] = dict(remote = remote, path = path, ignore = ignore)
+
+        elif type == "target":
+            target_name = name
+
+            # validate target name
+            if not re.match("^\w+$", target_name):
+                print_error('Not valid target name "%s"', target_name)
+
+            mods = None
+            if cf.has_option(section, 'modules'):
+                mods = cf.get(section, 'modules')
+                if mods != "*":
+                    mods = get_list(mods)
+
+            if not mods:
+                print_error('No modules were specified in target "%s"', target_name)
+
+            if not cf.has_option(section, 'hosts'):
+                print_error('No hosts were specified in target "%s"', target_name)
+
+            hosts = get_list(cf.get(section, 'hosts'))
+
+            compress = False
+            if cf.has_option(section, 'compress_assets'):
+                compress = cf.getboolean(section, 'compress_assets')
+
+            conf['targets'][target_name] = dict(modules=mods, hosts=hosts, compress_assets=compress)
+
+    if not conf['modules']:
+        print_error('No modules were defined')
+
+    if not conf['targets']:
+        print_error('No targets were defined')
+
+    # replace "*" with module name
+    for target in conf['targets']:
+        mods = conf['targets'][target]['modules']
+        if mods == '*':
+            conf['targets'][target]['modules'] = conf['modules'].keys()
+        else:
+            for mod in mods:
+                if mod not in conf['modules']:
+                    print_error('Not defined module "%s" found in target "%s"', mod, target)
+
+    if not options['target'] in conf['targets']:
+        print_error('Not defined target "%s"', options['target'])
+
+    for mod in options['modules']:
+        if mod not in conf['modules']:
+            print_error('Not defined module "%s" found in target "%s"', mod, target)
+
+    return conf
+#}}}
+
+def main():#{{{
+    os.chdir(os.getcwd())
+
+    options = {'force': False, 'target': None, 'modules': []}
+    options.update(parse_command_options())
+
+    conf = parse_configure(options)
+
+    #print configure
+    tunnel, pids = establish_tunnel(conf, options)
+
+    sync(conf, options, tunnel)
+
+    close_tunnel()
+#}}}
+
+if __name__ == "__main__":
+    main()
